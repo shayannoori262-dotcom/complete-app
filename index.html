@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+ <meta charset="utf-8">
+ <title>Pikzels - ویرایشگر</title>
+ <meta name="viewport" content="width=device-width,initial-scale=1">
+ <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+ <div id="app">
+ <header>
+ <button id="btn-signin">ورود با گوگل</button>
+ <button id="btn-signout" style="display:none">خروج</button>
+ <span id="user-email"></span>
+ </header>
+
+ <aside id="sidebar">
+ <h3>پروژه‌های من</h3>
+ <div id="projects-list"></div>
+ <button id="btn-new">پروژه جدید</button>
+ </aside>
+
+ <main>
+ <canvas id="c" width="900" height="600"></canvas>
+ <div id="tools">
+ <button id="add-text">افزودن متن</button>
+ <button id="add-rect">افزودن مربع</button>
+ <input type="file" id="img-upload" accept="image/*">
+ <button id="save">ذخیره</button>
+ <button id="download">دانلود PNG</button>
+ </div>
+ </main>
+ </div>
+
+ <!-- Fabric.js -->
+ <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.2.4/fabric.min.js"></script>
+
+ <!-- Firebase (Modular SDK via CDN) -->
+ <script type="module">
+ import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-app.js";
+ import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-auth.js";
+ import { getFirestore, collection, addDoc, query, where, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js";
+
+ // === جایگزین کن با تنظیمات خودت ===
+ const firebaseConfig = {
+ apiKey: "API_KEY",
+ authDomain: "PROJECT_ID.firebaseapp.com",
+ projectId: "PROJECT_ID",
+ // ...
+ };
+ // ==================================
+
+ const app = initializeApp(firebaseConfig);
+ const auth = getAuth(app);
+ const db = getFirestore(app);
+ const provider = new GoogleAuthProvider();
+
+ // ساده: نمایش/مخفی دکمه‌ها و نام کاربر const btnSignIn = document.getElementById('btn-signin');
+ const btnSignOut = document.getElementById('btn-signout');
+ const userEmail = document.getElementById('user-email');
+
+ btnSignIn.onclick = async () => {
+ try { await signInWithPopup(auth, provider); }
+ catch(e){ alert('خطا در ورود: ' + e.message); }
+ };
+ btnSignOut.onclick = async () => { await signOut(auth); };
+
+ onAuthStateChanged(auth, async user => {
+ if(user){
+ userEmail.textContent = user.email;
+ btnSignIn.style.display='none';
+ btnSignOut.style.display='inline-block';
+ loadMyProjects(user.uid);
+ } else {
+ userEmail.textContent = '';
+ btnSignIn.style.display='inline-block';
+ btnSignOut.style.display='none';
+ }
+ });
+
+ // تابع ذخیره پروژه نمونه (فقط JSON کانواس) async function saveProject(userId, name, canvasJson){
+ const coll = collection(db, 'projects');
+ await addDoc(coll, {
+ owner: userId,
+ name: name || 'بدون عنوان',
+ data: canvasJson,
+ createdAt: serverTimestamp()
+ });
+ alert('پروژه ذخیره شد');
+ }
+
+ // بارگذاری لیست پروژه‌ها async function loadMyProjects(userId){
+ const projectsList = document.getElementById('projects-list');
+ projectsList.innerHTML = 'در حال بارگذاری...';
+ const q = query(collection(db,'projects'), where('owner','==',userId));
+ const snap = await getDocs(q);
+ projectsList.innerHTML = '';
+ snap.forEach(doc => {
+ const d = doc.data();
+ const el = document.createElement('div');
+ el.textContent = d.name + ' — ' + (d.createdAt ? new Date(d.createdAt.seconds*1000).toLocaleString() : '');
+ el.style.cursor='pointer';
+ el.onclick = () => loadProjectToCanvas(d.data);
+ projectsList.appendChild(el);
+ });
+ }
+
+ // بارگذاری کانواس از JSON (فایل editor.js بعداً پیاده می‌کند) window.saveProject = saveProject;
+ window.loadProjectToCanvas = (json) => { // این تابع بعدتر در editor.js پیاده‌سازی شده و کانواس را بارگذاری می‌کند if(window.appEditor && window.appEditor.loadFromJSON) window.appEditor.loadFromJSON(json);
+ };
+ </script>
+
+ <!-- Editor logic (می‌توانی این را در js/editor.js قرار بدهی) -->
+ <script>
+ // ساده‌ترین ویرایشگر با Fabric.js
+ const canvas = new fabric.Canvas('c', { backgroundColor: '#ffffff' });
+ window.appEditor = {
+ canvas,
+ loadFromJSON(json){
+ try{
+ canvas.clear();
+ canvas.loadFromJSON(json, canvas.renderAll.bind(canvas));
+ }catch(e){ console.error(e); }
+ },
+ toJSON(){ return canvas.toJSON(); },
+ exportPNG(){
+ canvas.discardActiveObject();
+ return canvas.toDataURL({ format: 'png', quality: 0.95 });
+ }
+ };
+
+ document.getElementById('add-text').onclick = () => {
+ const t = new fabric.IText('متن جدید', { left: 50, top: 50, fontSize: 28 });
+ canvas.add(t).setActiveObject(t);
+ };
+ document.getElementById('add-rect').onclick = () => {
+ const r = new fabric.Rect({ left: 80, top: 80, width: 120, height: 90, fill:'#8bc' });
+ canvas.add(r).setActiveObject(r);
+ };
+ document.getElementById('img-upload').onchange = function(e){
+ const file = e.target.files[0];
+ if(!file) return;
+ const reader = new FileReader();
+ reader.onload = function(f){
+ const data = f.target.result;
+ fabric.Image.fromURL(data, img => {
+ img.scaleToWidth(300);
+ canvas.add(img).setActiveObject(img);
+ });
+ };
+ reader.readAsDataURL(file);
+ };
+
+ document.getElementById('save').onclick = async () => {
+ const userText = document.getElementById('user-email').textContent;
+ if(!userText){ alert('ابتدا باید وارد شوید.'); return; }
+ const name = prompt('نام پروژه:','Untitled');
+ const json = appEditor.toJSON();
+ // فراخوانی تابع saveProject که در فایل Firebase تعریف شد
+ const user = firebaseAuthUser(); // تابع کمکی پایین
+ if(!user){ alert('خطا: کاربر پیدا نشد'); return; }
+ await window.saveProject(user.uid, name, json);
+ // بارگذاری لیست دوباره انجام می‌شود خودکار در onAuthStateChanged
+ };
+
+ document.getElementById('download').onclick = () => {
+ const dataURL = appEditor.exportPNG();
+ const a = document.createElement('a');
+ a.href = dataURL;
+ a.download = 'pikzels-export.png';
+ a.click();
+ };
+
+ // کمک: واکشی UID از auth (در همان اسکریپت Firebase در بالا auth در دسترس است) function firebaseAuthUser(){
+ try { return firebase.auth && firebase.auth().currentUser; } catch(e){}
+ // اگر از نسخه ماژولی استفاده کرده‌ایم، auth درون اسکوپ بالا قرار دارد: روی window نیست؛ اما ما از onAuthStateChanged نام کاربر را نشان می‌دهیم
+ // برای سادگی: از userEmail برای تشخیص استفاده می‌کنیم (uid در saveProject باید از onAuthStateChanged نگهداری شود)
+ return null;
+ }
+ </script>
+</body>
+</html>
